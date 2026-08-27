@@ -1,0 +1,16 @@
+{
+  "name": "repub",
+  "version": "1.0.0",
+  "description": "Rewrite an EPUB with cleaned markup and a simple font stylesheet",
+  "license": "AGPL-3.0-only",
+  "author": "K Cartlidge",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "repub": "node bin/repub.js"
+  },
+  "bin": {
+    "repub": "bin/repub.js"
+  }
+}
