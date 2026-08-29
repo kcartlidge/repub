@@ -14,6 +14,8 @@
     "repub": "bin/repub.js"
   },
   "dependencies": {
-    "nodepub": "^5.1.1"
+    "archiver": "^8.0.0",
+    "nodepub": "^5.1.1",
+    "unzipper": "^0.12.5"
   }
 }
