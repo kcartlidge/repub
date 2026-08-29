@@ -12,5 +12,8 @@
   },
   "bin": {
     "repub": "bin/repub.js"
+  },
+  "dependencies": {
+    "nodepub": "^5.1.1"
   }
 }
