@@ -44,10 +44,29 @@ function findOpfPath(extractDir) {
   return opfPath;
 }
 
+function detectVersion(opfPath) {
+  const xml = fs.readFileSync(opfPath, 'utf8');
+  const doc = xmlParser.parse(xml);
+  const versionAttr = doc?.package?.['@_version'];
+  if (!versionAttr) {
+    throw new Error('OPF package is missing version attribute');
+  }
+
+  if (String(versionAttr).startsWith('3')) {
+    return 3;
+  }
+  if (String(versionAttr).startsWith('2')) {
+    return 2;
+  }
+
+  throw new Error(`Unsupported EPUB version: ${versionAttr}`);
+}
+
 async function readEpub(epubPath) {
   const extractDir = await extractEpub(epubPath);
   const opfPath = findOpfPath(extractDir);
-  return { extractDir, opfPath };
+  const version = detectVersion(opfPath);
+  return { extractDir, opfPath, version };
 }
 
-module.exports = { extractEpub, findOpfPath, readEpub };
+module.exports = { extractEpub, findOpfPath, detectVersion, readEpub };
