@@ -135,6 +135,105 @@ function resolveCoverPath(opfPath, opfDoc) {
   return fs.existsSync(coverPath) ? coverPath : undefined;
 }
 
+const IMAGE_EXT = /\.(svg|png|jpe?g|gif|tiff?)$/i;
+
+function uniqueBasename(preferred, usedNames) {
+  let name = preferred;
+  if (!usedNames.has(name.toLowerCase())) {
+    usedNames.add(name.toLowerCase());
+    return name;
+  }
+
+  const ext = path.extname(preferred);
+  const stem = path.basename(preferred, ext);
+  let n = 2;
+  do {
+    name = `${stem}-${n}${ext}`;
+    n += 1;
+  } while (usedNames.has(name.toLowerCase()));
+
+  usedNames.add(name.toLowerCase());
+  return name;
+}
+
+function isDocumentItem(item) {
+  const mediaType = String(item['@_media-type'] || '').toLowerCase();
+  if (mediaType.includes('html') || mediaType === 'application/xhtml+xml') {
+    return true;
+  }
+  const href = String(item['@_href'] || '').toLowerCase();
+  return /\.(x?html?|htm)$/.test(href);
+}
+
+async function readSpineSections(opfPath, opfDoc, extractDir) {
+  const opfDir = path.dirname(opfPath);
+  const items = asArray(opfDoc.package.manifest?.item);
+  const itemById = new Map(items.map((item) => [item['@_id'], item]));
+  const refs = asArray(opfDoc.package.spine?.itemref);
+
+  const imageStageDir = path.join(extractDir, '.repub-images');
+  await fs.promises.mkdir(imageStageDir, { recursive: true });
+
+  const images = [];
+  const pathToImage = new Map();
+  const usedNames = new Set();
+  const sections = [];
+
+  for (const ref of refs) {
+    const item = itemById.get(ref['@_idref']);
+    if (!item || !isDocumentItem(item)) {
+      continue;
+    }
+
+    const href = item['@_href'];
+    if (!href) {
+      continue;
+    }
+
+    const docPath = path.resolve(opfDir, decodeURIComponent(href));
+    const html = await fs.promises.readFile(docPath, 'utf8');
+    const $ = cheerio.load(html, { xmlMode: true });
+    const body = $('body');
+    const root = body.length ? body : $.root();
+
+    root.find('img[src]').each((_, el) => {
+      const src = $(el).attr('src');
+      if (!src || /^data:/i.test(src) || /^https?:/i.test(src)) {
+        return;
+      }
+
+      const absPath = path.resolve(path.dirname(docPath), decodeURIComponent(src.split('#')[0]));
+      if (!fs.existsSync(absPath) || !IMAGE_EXT.test(absPath)) {
+        return;
+      }
+
+      let image = pathToImage.get(absPath);
+      if (!image) {
+        const filename = uniqueBasename(path.basename(absPath), usedNames);
+        const sourcePath = path.join(imageStageDir, filename);
+        fs.copyFileSync(absPath, sourcePath);
+        image = { sourcePath, filename };
+        pathToImage.set(absPath, image);
+        images.push(image);
+      }
+
+      $(el).attr('src', `../images/${image.filename}`);
+    });
+
+    const bodyHtml = body.length ? body.html() || '' : $.root().html() || '';
+    const stem = path.basename(docPath, path.extname(docPath));
+
+    sections.push({
+      title: stem,
+      html: bodyHtml,
+      sourceHref: href,
+      sourcePath: docPath,
+    });
+  }
+
+  return { sections, images };
+}
+
 function parseOpfMetadata(opfPath) {
   const xml = fs.readFileSync(opfPath, 'utf8');
   const opfDoc = opfParser.parse(xml);
@@ -233,7 +332,8 @@ async function readEpub(epubPath) {
   const opfPath = findOpfPath(extractDir);
   const version = detectVersion(opfPath);
   const { metadata, opfDoc } = parseOpfMetadata(opfPath);
-  return { extractDir, opfPath, version, metadata, opfDoc };
+  const { sections, images } = await readSpineSections(opfPath, opfDoc, extractDir);
+  return { extractDir, opfPath, version, metadata, opfDoc, sections, images };
 }
 
 module.exports = {
@@ -241,5 +341,6 @@ module.exports = {
   findOpfPath,
   detectVersion,
   parseOpfMetadata,
+  readSpineSections,
   readEpub,
 };
