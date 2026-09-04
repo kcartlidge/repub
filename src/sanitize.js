@@ -11,6 +11,9 @@ function sanitizeHtml(html) {
   $('link[rel="stylesheet"]').remove();
   $('style').remove();
 
+  $('[class]').removeAttr('class');
+  $('[id]').removeAttr('id');
+
   return $.root().html() || '';
 }
 
