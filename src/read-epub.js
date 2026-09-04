@@ -165,11 +165,124 @@ function isDocumentItem(item) {
   return /\.(x?html?|htm)$/.test(href);
 }
 
-async function readSpineSections(opfPath, opfDoc, extractDir) {
+function normalizeHref(href) {
+  return path.normalize(decodeURIComponent(String(href).split('#')[0])).replace(/\\/g, '/');
+}
+
+function walkNavPoints(navPoints, map) {
+  for (const point of asArray(navPoints)) {
+    const label = textOf(point.navLabel?.text) || textOf(point.navLabel);
+    const src = point.content?.['@_src'];
+    if (label && src) {
+      const key = normalizeHref(src);
+      if (!map.has(key)) {
+        map.set(key, label);
+      }
+    }
+    if (point.navPoint) {
+      walkNavPoints(point.navPoint, map);
+    }
+  }
+}
+
+function titleMapFromNcx(opfPath, opfDoc) {
+  const map = new Map();
+  const items = asArray(opfDoc.package.manifest?.item);
+  const ncxItem = items.find(
+    (item) =>
+      String(item['@_media-type'] || '').includes('ncx') ||
+      String(item['@_id'] || '').toLowerCase() === 'ncx'
+  );
+  if (!ncxItem?.['@_href']) {
+    return map;
+  }
+
+  const ncxPath = path.resolve(path.dirname(opfPath), decodeURIComponent(ncxItem['@_href']));
+  if (!fs.existsSync(ncxPath)) {
+    return map;
+  }
+
+  const ncxDoc = opfParser.parse(fs.readFileSync(ncxPath, 'utf8'));
+  walkNavPoints(ncxDoc.ncx?.navMap?.navPoint, map);
+  return map;
+}
+
+function titleMapFromNav(opfPath, opfDoc) {
+  const map = new Map();
+  const items = asArray(opfDoc.package.manifest?.item);
+  const navItem = items.find((item) =>
+    String(item['@_properties'] || '')
+      .split(/\s+/)
+      .includes('nav')
+  );
+  if (!navItem?.['@_href']) {
+    return map;
+  }
+
+  const navPath = path.resolve(path.dirname(opfPath), decodeURIComponent(navItem['@_href']));
+  if (!fs.existsSync(navPath)) {
+    return map;
+  }
+
+  const $ = cheerio.load(fs.readFileSync(navPath, 'utf8'), { xmlMode: true });
+  let tocNav = null;
+  $('nav').each((_, el) => {
+    if (tocNav) {
+      return;
+    }
+    const attribs = el.attribs || {};
+    const type = attribs['epub:type'] || attribs.type || '';
+    if (String(type).split(/\s+/).includes('toc')) {
+      tocNav = $(el);
+    }
+  });
+  if (!tocNav) {
+    tocNav = $('nav').first();
+  }
+
+  tocNav.find('a[href]').each((_, el) => {
+    const href = $(el).attr('href');
+    const label = $(el).text().replace(/\s+/g, ' ').trim();
+    if (!href || !label) {
+      return;
+    }
+    const abs = path.resolve(path.dirname(navPath), decodeURIComponent(href.split('#')[0]));
+    const rel = path.relative(path.dirname(opfPath), abs).replace(/\\/g, '/');
+    if (!map.has(rel)) {
+      map.set(rel, label);
+    }
+  });
+
+  return map;
+}
+
+function buildTitleMap(opfPath, opfDoc, version) {
+  if (version === 3) {
+    const fromNav = titleMapFromNav(opfPath, opfDoc);
+    if (fromNav.size > 0) {
+      return fromNav;
+    }
+  }
+  return titleMapFromNcx(opfPath, opfDoc);
+}
+
+function titleFromHtml(html) {
+  const $ = cheerio.load(html, { xmlMode: true });
+  for (const tag of ['h1', 'h2', 'h3']) {
+    const text = $(tag).first().text().replace(/\s+/g, ' ').trim();
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
+
+async function readSpineSections(opfPath, opfDoc, extractDir, version) {
   const opfDir = path.dirname(opfPath);
   const items = asArray(opfDoc.package.manifest?.item);
   const itemById = new Map(items.map((item) => [item['@_id'], item]));
   const refs = asArray(opfDoc.package.spine?.itemref);
+  const titleMap = buildTitleMap(opfPath, opfDoc, version);
 
   const imageStageDir = path.join(extractDir, '.repub-images');
   await fs.promises.mkdir(imageStageDir, { recursive: true });
@@ -222,9 +335,12 @@ async function readSpineSections(opfPath, opfDoc, extractDir) {
 
     const bodyHtml = body.length ? body.html() || '' : $.root().html() || '';
     const stem = path.basename(docPath, path.extname(docPath));
+    const hrefKey = normalizeHref(href);
+    const title =
+      titleMap.get(hrefKey) || titleFromHtml(bodyHtml) || stem;
 
     sections.push({
-      title: stem,
+      title,
       html: bodyHtml,
       sourceHref: href,
       sourcePath: docPath,
@@ -332,7 +448,7 @@ async function readEpub(epubPath) {
   const opfPath = findOpfPath(extractDir);
   const version = detectVersion(opfPath);
   const { metadata, opfDoc } = parseOpfMetadata(opfPath);
-  const { sections, images } = await readSpineSections(opfPath, opfDoc, extractDir);
+  const { sections, images } = await readSpineSections(opfPath, opfDoc, extractDir, version);
   return { extractDir, opfPath, version, metadata, opfDoc, sections, images };
 }
 
