@@ -8,6 +8,7 @@ function sanitizeHtml(html) {
     decodeEntities: false,
   });
 
+  // Drop presentation hooks only; keep tags, text, and other attributes as-is.
   $('link[rel="stylesheet"]').remove();
   $('style').remove();
 
