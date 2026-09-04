@@ -449,7 +449,21 @@ async function readEpub(epubPath) {
   const version = detectVersion(opfPath);
   const { metadata, opfDoc } = parseOpfMetadata(opfPath);
   const { sections, images } = await readSpineSections(opfPath, opfDoc, extractDir, version);
-  return { extractDir, opfPath, version, metadata, opfDoc, sections, images };
+
+  // BookModel carries metadata, ordered sections, and staged images only.
+  // Original CSS (and other non-document resources) are intentionally dropped.
+  return {
+    version,
+    metadata,
+    sections: sections.map(({ title, html, excludeFromContents, isFrontMatter }) => ({
+      title,
+      html,
+      excludeFromContents,
+      isFrontMatter,
+    })),
+    images,
+    extractDir,
+  };
 }
 
 module.exports = {
