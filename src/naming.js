@@ -1,7 +1,11 @@
 'use strict';
 
+const path = require('path');
+
 function outputStem(inputPath, version) {
-  throw new Error('outputStem not implemented');
+  const base = path.basename(inputPath);
+  const stem = base.replace(/\.epub$/i, '') || base;
+  return `${stem} -- repub-epub${version}`;
 }
 
 module.exports = { outputStem };
