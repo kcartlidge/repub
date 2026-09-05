@@ -58,6 +58,10 @@ async function writeEpub(book, outputFolder, options = {}) {
     );
   }
 
+  epub.addCSS(`body, p, div, span, h1, h2, h3, h4, h5, h6, li, td, th {
+  font-family: Verdana, Tahoma, Georgia, Arial, Sans-Serif;
+}`);
+
   await fs.promises.mkdir(outputFolder, { recursive: true });
 
   const inputPath = options.inputPath || 'book.epub';
