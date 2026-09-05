@@ -35,6 +35,12 @@ function mapMetadata(book, epubVersion) {
     metadata.images = book.images.map((image) => image.sourcePath);
   }
 
+  // Prefer the source book's own cover page and TOC when present.
+  metadata.addInternalCover = false;
+  metadata.showContents = false;
+  metadata.appendSeriesToTitle = false;
+  metadata.transformNamedEntities = true;
+
   return metadata;
 }
 
