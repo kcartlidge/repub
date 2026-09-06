@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const { readEpub } = require('./read-epub');
 const { writeEpub } = require('./write-epub');
 
@@ -50,6 +51,13 @@ function parseArgs(argv) {
   };
 }
 
+async function cleanupExtractDir(extractDir) {
+  if (!extractDir) {
+    return;
+  }
+  await fs.promises.rm(extractDir, { recursive: true, force: true });
+}
+
 async function run(argv) {
   let args;
   try {
@@ -66,14 +74,18 @@ async function run(argv) {
     return;
   }
 
-  const book = await readEpub(args.epubFile);
-  const outputPath = await writeEpub(book, args.outputFolder, {
-    inputPath: args.epubFile,
-    forceV2: args.forceV2,
-    forceV3: args.forceV3,
-  });
-
-  console.log(outputPath);
+  let book;
+  try {
+    book = await readEpub(args.epubFile);
+    const outputPath = await writeEpub(book, args.outputFolder, {
+      inputPath: args.epubFile,
+      forceV2: args.forceV2,
+      forceV3: args.forceV3,
+    });
+    console.log(outputPath);
+  } finally {
+    await cleanupExtractDir(book && book.extractDir);
+  }
 }
 
 module.exports = { run, parseArgs, printUsage };
