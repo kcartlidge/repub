@@ -6,6 +6,24 @@ const nodepub = require('nodepub');
 const { sanitizeHtml } = require('./sanitize');
 const { outputStem } = require('./naming');
 
+// Tiny placeholder used only when the source EPUB has no cover image.
+// Nodepub requires a cover path, so we omit a real cover and fall back to this.
+const FALLBACK_COVER_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+);
+
+async function ensureCover(metadata, book) {
+  if (metadata.cover) {
+    return;
+  }
+
+  const dir = book.extractDir || path.dirname(metadata.images?.[0] || process.cwd());
+  const coverPath = path.join(dir, '.repub-cover-fallback.png');
+  await fs.promises.writeFile(coverPath, FALLBACK_COVER_PNG);
+  metadata.cover = coverPath;
+}
+
 function mapMetadata(book, epubVersion) {
   const src = book.metadata || {};
   const metadata = {
@@ -53,6 +71,7 @@ async function writeEpub(book, outputFolder, options = {}) {
 
   const epubVersion = forceV2 ? 2 : forceV3 ? 3 : book.version;
   const metadata = mapMetadata(book, epubVersion);
+  await ensureCover(metadata, book);
   const epub = nodepub.document(metadata);
 
   for (const section of book.sections) {
