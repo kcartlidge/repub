@@ -158,9 +158,24 @@ function uniqueBasename(preferred, usedNames) {
 
 function isDocumentItem(item) {
   const mediaType = String(item['@_media-type'] || '').toLowerCase();
+
+  // Spine can list fonts, CSS, audio, etc. — only XHTML/HTML become sections.
+  // Images are pulled from markup separately, not from spine itemrefs.
+  if (
+    mediaType.includes('css') ||
+    mediaType.includes('font') ||
+    mediaType.includes('audio') ||
+    mediaType.includes('video') ||
+    mediaType.includes('javascript') ||
+    mediaType === 'application/x-dtbncx+xml'
+  ) {
+    return false;
+  }
+
   if (mediaType.includes('html') || mediaType === 'application/xhtml+xml') {
     return true;
   }
+
   const href = String(item['@_href'] || '').toLowerCase();
   return /\.(x?html?|htm)$/.test(href);
 }
