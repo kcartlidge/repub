@@ -79,7 +79,8 @@ async function writeEpub(book, outputFolder, options = {}) {
       section.title,
       sanitizeHtml(section.html),
       Boolean(section.excludeFromContents),
-      Boolean(section.isFrontMatter)
+      Boolean(section.isFrontMatter),
+      section.outputFilename
     );
   }
 

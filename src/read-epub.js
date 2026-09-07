@@ -292,7 +292,244 @@ function titleFromHtml(html) {
   return undefined;
 }
 
-async function readSpineSections(opfPath, opfDoc, extractDir, version) {
+function isRemoteOrDataRef(ref) {
+  return !ref || /^(data:|https?:|mailto:|#)/i.test(ref);
+}
+
+function stageImage(absPath, coverPath, imageStageDir, pathToImage, usedNames, images) {
+  if (coverPath && path.resolve(absPath) === path.resolve(coverPath)) {
+    return path.basename(coverPath);
+  }
+
+  let image = pathToImage.get(absPath);
+  if (!image) {
+    const filename = uniqueBasename(path.basename(absPath), usedNames);
+    const sourcePath = path.join(imageStageDir, filename);
+    fs.copyFileSync(absPath, sourcePath);
+    image = { sourcePath, filename };
+    pathToImage.set(absPath, image);
+    images.push(image);
+  }
+  return image.filename;
+}
+
+function rewriteDocumentImages($, docPath, coverPath, imageStageDir, pathToImage, usedNames, images) {
+  const root = $('body').length ? $('body') : $.root();
+
+  const applyRef = (el, attrNames) => {
+    let src;
+    let attrUsed;
+    for (const name of attrNames) {
+      const value = $(el).attr(name);
+      if (value) {
+        src = value;
+        attrUsed = name;
+        break;
+      }
+    }
+    if (isRemoteOrDataRef(src)) {
+      return;
+    }
+
+    const absPath = path.resolve(
+      path.dirname(docPath),
+      decodeURIComponent(src.split('#')[0])
+    );
+    if (!fs.existsSync(absPath) || !IMAGE_EXT.test(absPath)) {
+      // Drop broken local image refs so they don't survive into the EPUB.
+      if (IMAGE_EXT.test(src.split('#')[0])) {
+        $(el).remove();
+      }
+      return;
+    }
+
+    const filename = stageImage(
+      absPath,
+      coverPath,
+      imageStageDir,
+      pathToImage,
+      usedNames,
+      images
+    );
+    const next = `../images/${filename}`;
+    $(el).attr(attrUsed, next);
+    // Keep a plain src as well when rewriting SVG <image> for flatten/img use.
+    if (attrUsed !== 'src') {
+      $(el).attr('src', next);
+    }
+  };
+
+  root.find('img').each((_, el) => applyRef(el, ['src']));
+  root.find('image').each((_, el) => applyRef(el, ['xlink:href', 'href', 'src']));
+
+  // Nodepub/EPUB3 don't declare properties="svg"; turn image SVGs into <img>.
+  root.find('svg').each((_, svg) => {
+    const $svg = $(svg);
+    const $images = $svg.find('image, img');
+    if ($images.length === 0) {
+      $svg.remove();
+      return;
+    }
+
+    const parts = [];
+    $images.each((__, img) => {
+      const src =
+        $(img).attr('src') ||
+        $(img).attr('xlink:href') ||
+        $(img).attr('href');
+      if (src) {
+        parts.push(`<img src="${src}" alt="" />`);
+      }
+    });
+    $svg.replaceWith(parts.join(''));
+  });
+}
+
+function loadSectionFromFile(
+  docPath,
+  titleHint,
+  coverPath,
+  imageStageDir,
+  pathToImage,
+  usedNames,
+  images,
+  flags = {}
+) {
+  const html = fs.readFileSync(docPath, 'utf8');
+  const $ = cheerio.load(html, { xmlMode: true });
+  rewriteDocumentImages($, docPath, coverPath, imageStageDir, pathToImage, usedNames, images);
+
+  const body = $('body');
+  const bodyHtml = body.length ? body.html() || '' : $.root().html() || '';
+  const stem = path.basename(docPath, path.extname(docPath));
+
+  return {
+    title: titleHint || titleFromHtml(bodyHtml) || stem,
+    html: bodyHtml,
+    sourcePath: docPath,
+    excludeFromContents: Boolean(flags.excludeFromContents),
+    isFrontMatter: Boolean(flags.isFrontMatter),
+  };
+}
+
+function collectLinkedHtmlDocuments(
+  sections,
+  coverPath,
+  imageStageDir,
+  pathToImage,
+  usedNames,
+  images,
+  titleMap,
+  opfDir
+) {
+  const known = new Set(sections.map((section) => path.resolve(section.sourcePath)));
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    const snapshot = sections.slice();
+
+    for (const section of snapshot) {
+      const $ = cheerio.load(section.html, { xmlMode: true }, false);
+      $('a[href]').each((_, el) => {
+        const href = $(el).attr('href');
+        if (isRemoteOrDataRef(href)) {
+          return;
+        }
+
+        const filePart = href.split('#')[0];
+        if (!filePart) {
+          return;
+        }
+
+        const absPath = path.resolve(
+          path.dirname(section.sourcePath),
+          decodeURIComponent(filePart)
+        );
+        if (known.has(absPath) || !fs.existsSync(absPath)) {
+          return;
+        }
+        if (IMAGE_EXT.test(absPath)) {
+          return;
+        }
+        if (!/\.(x?html?|htm)$/i.test(absPath)) {
+          return;
+        }
+
+        known.add(absPath);
+        const rel = path.relative(opfDir, absPath).replace(/\\/g, '/');
+        const title = titleMap.get(normalizeHref(rel)) || titleMap.get(path.basename(absPath));
+        sections.push(
+          loadSectionFromFile(
+            absPath,
+            title,
+            coverPath,
+            imageStageDir,
+            pathToImage,
+            usedNames,
+            images
+          )
+        );
+        changed = true;
+      });
+    }
+  }
+}
+
+function rewriteInternalSectionLinks(sections) {
+  const byAbs = new Map();
+  const byBase = new Map();
+
+  sections.forEach((section, index) => {
+    const filename = `s${index + 1}`;
+    section.outputFilename = filename;
+    const abs = path.resolve(section.sourcePath);
+    byAbs.set(abs, `${filename}.xhtml`);
+
+    const base = path.basename(abs);
+    if (byBase.has(base)) {
+      byBase.set(base, null);
+    } else {
+      byBase.set(base, `${filename}.xhtml`);
+    }
+  });
+
+  for (const section of sections) {
+    const $ = cheerio.load(section.html, null, false);
+    $('a[href]').each((_, el) => {
+      const href = $(el).attr('href');
+      if (isRemoteOrDataRef(href)) {
+        return;
+      }
+
+      const parts = String(href).split('#');
+      const filePart = parts[0];
+      const hash = parts.slice(1).join('#');
+      if (!filePart) {
+        return;
+      }
+
+      const absPath = path.resolve(
+        path.dirname(section.sourcePath),
+        decodeURIComponent(filePart)
+      );
+      let target = byAbs.get(absPath);
+      if (!target) {
+        target = byBase.get(path.basename(absPath)) || undefined;
+      }
+
+      if (target) {
+        $(el).attr('href', hash ? `${target}#${hash}` : target);
+      } else {
+        // Avoid EPUBCheck RSC-007 for links we cannot map into the rewrite.
+        $(el).removeAttr('href');
+      }
+    });
+    section.html = $.root().html() || '';
+  }
+}
+
+async function readSpineSections(opfPath, opfDoc, extractDir, version, coverPath) {
   const opfDir = path.dirname(opfPath);
   const items = asArray(opfDoc.package.manifest?.item);
   const itemById = new Map(items.map((item) => [item['@_id'], item]));
@@ -319,48 +556,33 @@ async function readSpineSections(opfPath, opfDoc, extractDir, version) {
     }
 
     const docPath = path.resolve(opfDir, decodeURIComponent(href));
-    const html = await fs.promises.readFile(docPath, 'utf8');
-    const $ = cheerio.load(html, { xmlMode: true });
-    const body = $('body');
-    const root = body.length ? body : $.root();
-
-    root.find('img[src]').each((_, el) => {
-      const src = $(el).attr('src');
-      if (!src || /^data:/i.test(src) || /^https?:/i.test(src)) {
-        return;
-      }
-
-      const absPath = path.resolve(path.dirname(docPath), decodeURIComponent(src.split('#')[0]));
-      if (!fs.existsSync(absPath) || !IMAGE_EXT.test(absPath)) {
-        return;
-      }
-
-      let image = pathToImage.get(absPath);
-      if (!image) {
-        const filename = uniqueBasename(path.basename(absPath), usedNames);
-        const sourcePath = path.join(imageStageDir, filename);
-        fs.copyFileSync(absPath, sourcePath);
-        image = { sourcePath, filename };
-        pathToImage.set(absPath, image);
-        images.push(image);
-      }
-
-      $(el).attr('src', `../images/${image.filename}`);
-    });
-
-    const bodyHtml = body.length ? body.html() || '' : $.root().html() || '';
-    const stem = path.basename(docPath, path.extname(docPath));
     const hrefKey = normalizeHref(href);
-    const title =
-      titleMap.get(hrefKey) || titleFromHtml(bodyHtml) || stem;
+    const titleHint = titleMap.get(hrefKey);
 
-    sections.push({
-      title,
-      html: bodyHtml,
-      sourceHref: href,
-      sourcePath: docPath,
-    });
+    sections.push(
+      loadSectionFromFile(
+        docPath,
+        titleHint,
+        coverPath,
+        imageStageDir,
+        pathToImage,
+        usedNames,
+        images
+      )
+    );
   }
+
+  collectLinkedHtmlDocuments(
+    sections,
+    coverPath,
+    imageStageDir,
+    pathToImage,
+    usedNames,
+    images,
+    titleMap,
+    opfDir
+  );
+  rewriteInternalSectionLinks(sections);
 
   return { sections, images };
 }
@@ -463,19 +685,28 @@ async function readEpub(epubPath) {
   const opfPath = findOpfPath(extractDir);
   const version = detectVersion(opfPath);
   const { metadata, opfDoc } = parseOpfMetadata(opfPath);
-  const { sections, images } = await readSpineSections(opfPath, opfDoc, extractDir, version);
+  const { sections, images } = await readSpineSections(
+    opfPath,
+    opfDoc,
+    extractDir,
+    version,
+    metadata.coverPath
+  );
 
   // BookModel carries metadata, ordered sections, and staged images only.
   // Original CSS (and other non-document resources) are intentionally dropped.
   return {
     version,
     metadata,
-    sections: sections.map(({ title, html, excludeFromContents, isFrontMatter }) => ({
-      title,
-      html,
-      excludeFromContents,
-      isFrontMatter,
-    })),
+    sections: sections.map(
+      ({ title, html, excludeFromContents, isFrontMatter, outputFilename }) => ({
+        title,
+        html,
+        excludeFromContents,
+        isFrontMatter,
+        outputFilename,
+      })
+    ),
     images,
     extractDir,
   };
