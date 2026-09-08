@@ -495,7 +495,7 @@ function rewriteInternalSectionLinks(sections) {
   });
 
   for (const section of sections) {
-    const $ = cheerio.load(section.html, null, false);
+    const $ = cheerio.load(section.html, { xmlMode: true }, false);
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href');
       if (isRemoteOrDataRef(href)) {

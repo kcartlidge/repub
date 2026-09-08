@@ -37,7 +37,7 @@ function normalizeVoidElements(html) {
 }
 
 function sanitizeHtml(html) {
-  const $ = cheerio.load(html, null, false);
+  const $ = cheerio.load(html, { xmlMode: true }, false);
 
   // Drop presentation hooks only; keep tags, text, and other attributes as-is.
   $('link[rel="stylesheet"]').remove();
@@ -45,6 +45,20 @@ function sanitizeHtml(html) {
 
   $('[class]').removeAttr('class');
   $('[id]').removeAttr('id');
+
+  // Page-break markers are often empty <a id="pageN"/>. After id stripping they
+  // become bare <a/> which HTML parsers treat as open tags and nest <p> inside.
+  $('a').each((_, el) => {
+    const $el = $(el);
+    if ($el.attr('href')) {
+      return;
+    }
+    if (!String($el.html() || '').trim()) {
+      $el.remove();
+    } else {
+      $el.replaceWith($el.contents());
+    }
+  });
 
   return normalizeVoidElements($.root().html() || '');
 }
