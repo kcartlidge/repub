@@ -37,7 +37,12 @@ function mapMetadata(book, epubVersion) {
   if (src.fileAs) metadata.fileAs = src.fileAs;
   if (src.description) metadata.description = src.description;
   if (src.publisher) metadata.publisher = src.publisher;
-  if (src.published) metadata.published = src.published;
+  if (src.published) {
+    metadata.published = src.published;
+  } else {
+    // Nodepub's EPUB 2 OPF always emits dc:date; an empty value fails EPUBCheck.
+    metadata.published = new Date().toISOString().slice(0, 10);
+  }
   if (src.copyright) metadata.copyright = src.copyright;
   if (src.genre) metadata.genre = src.genre;
   if (src.tags) metadata.tags = src.tags;
