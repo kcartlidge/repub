@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const cheerio = require('cheerio');
 
 const VOID_TAGS = [
@@ -36,7 +37,8 @@ function normalizeVoidElements(html) {
     .replace(VOID_CLOSE_RE, '');
 }
 
-function sanitizeHtml(html) {
+function sanitizeHtml(html, options = {}) {
+  const coverName = options.coverPath ? path.basename(options.coverPath) : null;
   const $ = cheerio.load(html, { xmlMode: true }, false);
 
   // Drop presentation hooks only; keep tags, text, and other attributes as-is.
@@ -58,6 +60,17 @@ function sanitizeHtml(html) {
     } else {
       $el.replaceWith($el.contents());
     }
+  });
+
+  // Last-step annotation: tag content images after class stripping so sanitize
+  // does not wipe inline-image, and the cover image is left unmarked.
+  $('img[src]').each((_, el) => {
+    const src = $(el).attr('src') || '';
+    const name = path.basename(src.split('#')[0]);
+    if (coverName && name === coverName) {
+      return;
+    }
+    $(el).attr('class', 'inline-image');
   });
 
   return normalizeVoidElements($.root().html() || '');

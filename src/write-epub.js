@@ -82,7 +82,7 @@ async function writeEpub(book, outputFolder, options = {}) {
   for (const section of book.sections) {
     epub.addSection(
       section.title,
-      sanitizeHtml(section.html),
+      sanitizeHtml(section.html, { coverPath: metadata.cover }),
       Boolean(section.excludeFromContents),
       Boolean(section.isFrontMatter),
       section.outputFilename
@@ -91,6 +91,12 @@ async function writeEpub(book, outputFolder, options = {}) {
 
   epub.addCSS(`body, p, div, span, h1, h2, h3, h4, h5, h6, li, td, th {
   font-family: Verdana, Tahoma, Georgia, Arial, Sans-Serif;
+}
+
+img.inline-image {
+  max-width: 50%;
+  display: block;
+  margin: 2rem auto;
 }`);
 
   await fs.promises.mkdir(outputFolder, { recursive: true });
