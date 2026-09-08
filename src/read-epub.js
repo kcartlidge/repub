@@ -634,7 +634,10 @@ async function extractEpub(epubPath) {
   await fs.promises.access(resolved, fs.constants.R_OK);
 
   const extractDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'repub-'));
-  await fs.createReadStream(resolved).pipe(unzipper.Extract({ path: extractDir })).promise();
+  // Open.file reads via the central directory; stream Extract chokes on
+  // Calibre-style zips that use data descriptors.
+  const directory = await unzipper.Open.file(resolved);
+  await directory.extract({ path: extractDir });
   return extractDir;
 }
 
